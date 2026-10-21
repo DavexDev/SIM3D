@@ -23,7 +23,8 @@ const UNO_PINS: Record<number, ['B' | 'D', number]> = {
   10: ['B', 2], 11: ['B', 3], 12: ['B', 4], 13: ['B', 5],
 }
 
-export type PinListener = (pin: number, high: boolean) => void
+/** `cycles` is the CPU cycle count at which the pin changed. */
+export type PinListener = (pin: number, high: boolean, cycles: number) => void
 
 /** ATmega328P (Arduino Uno) running a compiled sketch. */
 export class UnoBoard {
@@ -31,6 +32,7 @@ export class UnoBoard {
   readonly usart: AVRUSART
   private readonly ports: { B: AVRIOPort; C: AVRIOPort; D: AVRIOPort }
   private readonly pinListeners = new Set<PinListener>()
+  private readonly lastHigh: Record<number, boolean> = {}
   onSerial: (byte: number) => void = () => {}
 
   constructor(program: Uint16Array) {
@@ -49,7 +51,9 @@ export class UnoBoard {
     for (const [pin, [port, bit]] of Object.entries(UNO_PINS)) {
       this.ports[port].addListener(() => {
         const high = this.ports[port].pinState(bit) === PinState.High
-        this.pinListeners.forEach((fn) => fn(Number(pin), high))
+        if (this.lastHigh[Number(pin)] === high) return
+        this.lastHigh[Number(pin)] = high
+        this.pinListeners.forEach((fn) => fn(Number(pin), high, this.cpu.cycles))
       })
     }
   }
@@ -71,6 +75,11 @@ export class UnoBoard {
       avrInstruction(this.cpu)
       this.cpu.tick()
     }
+  }
+
+  /** Send a byte to the sketch's Serial input. */
+  serialWrite(byte: number) {
+    this.usart.writeByte(byte)
   }
 
   get timeMs(): number {
