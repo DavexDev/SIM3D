@@ -28,3 +28,10 @@ button:hover { background: #242a33; }
 .filebtn:hover { background: #242a33; }
 .filebtn input { display: none; }
 .problems { background: #2a1a1a; border: 1px solid #5a2a2a; color: #ffb4a8; border-radius: 8px; padding: 10px 12px 10px 28px; margin: 12px 0 0; font-size: 0.9rem; }
+.dume-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.axis { display: flex; flex-direction: column; gap: 6px; font-size: 0.9rem; }
+.axis input[type="range"] { width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { padding: 2px 8px; font-size: 0.8rem; }
+.chip.on { background: #2f6fdb; border-color: #2f6fdb; }
+.wide { width: 100%; }

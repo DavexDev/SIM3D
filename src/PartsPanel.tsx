@@ -14,6 +14,7 @@ const TYPE_LABEL: Record<PartType, string> = {
   stepper: 'Stepper NEMA-17',
   button: 'Boton',
   pot: 'Potenciometro',
+  pca9685: 'Driver PCA9685',
 }
 
 interface PinSelectProps {
@@ -92,6 +93,25 @@ export function PartsPanel({ parts, status, problems, onChange, onAdd, onPress, 
                     <PinSelect label="DIR" value={p.dirPin} options={DIGITAL_PINS} format={pinLabel} onChange={(n) => update(p.id, { dirPin: n })} />
                     <PinSelect label="Pasos/vuelta" value={p.stepsPerRev} options={STEPS_PER_REV} format={String} onChange={(n) => update(p.id, { stepsPerRev: n })} />
                   </>
+                ) : p.type === 'pca9685' ? (
+                  <div className="wide">
+                    <span className="muted">Canales con servo de 270 grados</span>
+                    <div className="chips">
+                      {Array.from({ length: 16 }, (_, ch) => (
+                        <button
+                          key={ch}
+                          className={p.wide.includes(ch) ? 'chip on' : 'chip'}
+                          onClick={() =>
+                            update(p.id, {
+                              wide: p.wide.includes(ch) ? p.wide.filter((c) => c !== ch) : [...p.wide, ch].sort((a, b) => a - b),
+                            })
+                          }
+                        >
+                          {ch}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ) : p.type === 'pot' ? (
                   <PinSelect label="Canal" value={p.channel} options={ANALOG_CHANNELS} format={channelLabel} onChange={(n) => update(p.id, { channel: n })} />
                 ) : (

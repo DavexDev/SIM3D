@@ -6,6 +6,7 @@ export type PartConfig =
   | { id: string; type: 'stepper'; stepPin: number; dirPin: number; stepsPerRev: number }
   | { id: string; type: 'button'; pin: number }
   | { id: string; type: 'pot'; channel: number }
+  | { id: string; type: 'pca9685'; address: number; wide: number[] }
 
 export type PartType = PartConfig['type']
 
@@ -19,20 +20,37 @@ export interface Project {
   parts: PartConfig[]
 }
 
-export const DIGITAL_PINS = Array.from({ length: 14 }, (_, i) => i)
+/** D0..D13 plus A0..A5 used as digital pins (14..19). */
+export const DIGITAL_PINS = Array.from({ length: 20 }, (_, i) => i)
+export const SDA_PIN = 18
+export const SCL_PIN = 19
 export const ANALOG_CHANNELS = [0, 1, 2, 3, 4, 5]
-export const STEPS_PER_REV = [200, 400, 800, 1600, 3200]
+export const STEPS_PER_REV = [200, 400, 800, 1600, 3200, 7200]
 
-export const pinLabel = (pin: number) => `D${pin}`
+export const pinLabel = (pin: number) => (pin >= 14 ? `A${pin - 14}` : `D${pin}`)
 export const channelLabel = (ch: number) => `A${ch}`
 
 export const EXAMPLES = [
+  { id: 'dume', label: 'DUM-E (firmware real)' },
   { id: 'servo_stepper', label: 'Servo + stepper' },
   { id: 'pot_button', label: 'Potenciometro + boton' },
   { id: 'blink', label: 'Blink' },
 ]
 
 export const EXAMPLE_PROJECTS: Record<string, Project> = {
+  dume: {
+    version: 1,
+    firmware: { kind: 'example', id: 'dume' },
+    parts: [
+      // Base: NEMA-17 + A4988 at 1/16 microstepping, 27T/12T gears -> 20 steps per degree.
+      { id: 'base_x', type: 'stepper', stepPin: 2, dirPin: 3, stepsPerRev: 7200 },
+      // Y=1, Z=2, gripper=3, W=4 (270 deg servo), R=5.
+      { id: 'servos', type: 'pca9685', address: 0x40, wide: [4] },
+      { id: 'arm_pulse', type: 'led', pin: 6 },
+      { id: 'panel_arm', type: 'led', pin: 15 },
+      { id: 'panel_estop', type: 'led', pin: 16 },
+    ],
+  },
   servo_stepper: {
     version: 1,
     firmware: { kind: 'example', id: 'servo_stepper' },
@@ -66,6 +84,8 @@ export function digitalPinsOf(part: PartConfig): number[] {
       return [part.stepPin, part.dirPin]
     case 'pot':
       return []
+    case 'pca9685':
+      return [SDA_PIN, SCL_PIN]
     default:
       return [part.pin]
   }
@@ -91,6 +111,9 @@ export function validate(project: Project): string[] {
     }
     if (pin <= 1) problems.push(`${pinLabel(pin)} lo usa el puerto serial (${ids.join(', ')})`)
   }
+  const addrs = new Map<number, number>()
+  for (const part of project.parts) if (part.type === 'pca9685') addrs.set(part.address, (addrs.get(part.address) ?? 0) + 1)
+  for (const [a, n] of addrs) if (n > 1) problems.push(`Direccion I2C 0x${a.toString(16)} repetida`)
   for (const [ch, n] of channels) {
     if (n > 1) problems.push(`${channelLabel(ch)} tiene ${n} potenciometros`)
   }
@@ -136,6 +159,12 @@ export function parseProject(text: string): Project {
       case 'pot':
         if (!isInt(p.channel, 0, 5)) throw new Error(`${p.id}: canal analogico invalido`)
         return { id: p.id, type: 'pot', channel: p.channel }
+      case 'pca9685':
+        if (!isInt(p.address, 8, 119)) throw new Error(`${p.id}: direccion I2C invalida`)
+        if (!Array.isArray(p.wide) || !p.wide.every((c) => isInt(c, 0, 15))) {
+          throw new Error(`${p.id}: canales de 270 grados invalidos`)
+        }
+        return { id: p.id, type: 'pca9685', address: p.address, wide: [...new Set(p.wide)].sort((a, b) => a - b) }
       default:
         throw new Error('Tipo de pieza desconocido')
     }
@@ -154,6 +183,12 @@ export function newPart(type: PartType, project: Project): PartConfig {
     return from
   }
   switch (type) {
+    case 'pca9685': {
+      const taken = new Set(project.parts.flatMap((p) => (p.type === 'pca9685' ? [p.address] : [])))
+      let address = 0x40
+      while (taken.has(address)) address++
+      return { id, type, address, wide: [] }
+    }
     case 'stepper': {
       const stepPin = free(2)
       used.add(stepPin)

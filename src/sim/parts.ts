@@ -1,4 +1,5 @@
 import { CPU_HZ, type UnoBoard } from './board'
+import type { Pca9685 } from './i2c'
 
 const US_PER_CYCLE = 1e6 / CPU_HZ
 
@@ -117,5 +118,40 @@ export class Pot implements Part {
 
   dispose() {
     this.board.setAnalog(this.channel, 0)
+  }
+}
+
+/** Servos plugged into a PCA9685; `wide` lists the channels that use 270 deg servos. */
+export class PcaServos implements Part {
+  readonly device: Pca9685
+  private readonly wide: number[]
+  private readonly board: UnoBoard
+
+  constructor(board: UnoBoard, device: Pca9685, wide: number[]) {
+    this.board = board
+    this.device = device
+    this.wide = wide
+    board.i2c.add(device)
+  }
+
+  /** Shaft angle of channel `ch`, or undefined while the channel is not driven. */
+  angle(ch: number): number | undefined {
+    const us = this.device.pulseUs(ch)
+    if (us <= 0) return undefined
+    const range = this.wide.includes(ch) ? 270 : 180
+    return Math.min(range, Math.max(0, ((us - 500) / 2000) * range))
+  }
+
+  driven(): { ch: number; deg: number }[] {
+    const out: { ch: number; deg: number }[] = []
+    for (let ch = 0; ch < 16; ch++) {
+      const deg = this.angle(ch)
+      if (deg !== undefined) out.push({ ch, deg })
+    }
+    return out
+  }
+
+  dispose() {
+    this.board.i2c.remove(this.device)
   }
 }

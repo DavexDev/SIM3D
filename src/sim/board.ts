@@ -1,6 +1,7 @@
 import {
   AVRADC,
   AVRIOPort,
+  AVRTWI,
   AVRTimer,
   AVRUSART,
   CPU,
@@ -13,16 +14,19 @@ import {
   timer0Config,
   timer1Config,
   timer2Config,
+  twiConfig,
   usart0Config,
 } from 'avr8js'
+import { I2CBus } from './i2c'
 
 export const CPU_HZ = 16_000_000
 
-/** Arduino Uno pin number -> [port, bit]. Only digital pins for now. */
-const UNO_PINS: Record<number, ['B' | 'D', number]> = {
+/** Arduino Uno pin number -> [port, bit]. 14..19 are A0..A5 used as digital pins. */
+const UNO_PINS: Record<number, ['B' | 'C' | 'D', number]> = {
   0: ['D', 0], 1: ['D', 1], 2: ['D', 2], 3: ['D', 3], 4: ['D', 4],
   5: ['D', 5], 6: ['D', 6], 7: ['D', 7], 8: ['B', 0], 9: ['B', 1],
   10: ['B', 2], 11: ['B', 3], 12: ['B', 4], 13: ['B', 5],
+  14: ['C', 0], 15: ['C', 1], 16: ['C', 2], 17: ['C', 3], 18: ['C', 4], 19: ['C', 5],
 }
 
 /** `cycles` is the CPU cycle count at which the pin changed. */
@@ -33,6 +37,8 @@ export class UnoBoard {
   readonly cpu: CPU
   readonly usart: AVRUSART
   private readonly adc: AVRADC
+  readonly i2c: I2CBus
+  private readonly rxQueue: number[] = []
   private readonly ports: { B: AVRIOPort; C: AVRIOPort; D: AVRIOPort }
   private readonly pinListeners = new Set<PinListener>()
   private readonly lastHigh: Record<number, boolean> = {}
@@ -49,6 +55,7 @@ export class UnoBoard {
       D: new AVRIOPort(this.cpu, portDConfig),
     }
     this.adc = new AVRADC(this.cpu, adcConfig)
+    this.i2c = new I2CBus(new AVRTWI(this.cpu, twiConfig, CPU_HZ))
     this.usart = new AVRUSART(this.cpu, usart0Config, CPU_HZ)
     this.usart.onByteTransmit = (b) => this.onSerial(b)
 
@@ -76,6 +83,7 @@ export class UnoBoard {
   run(cycles: number) {
     const end = this.cpu.cycles + cycles
     while (this.cpu.cycles < end) {
+      if (this.rxQueue.length > 0 && this.usart.writeByte(this.rxQueue[0]) === true) this.rxQueue.shift()
       avrInstruction(this.cpu)
       this.cpu.tick()
     }
@@ -92,9 +100,9 @@ export class UnoBoard {
     this.adc.channelValues[channel] = volts
   }
 
-  /** Send a byte to the sketch's Serial input. */
+  /** Queue a byte for the sketch's Serial input; delivered at the emulated baud rate. */
   serialWrite(byte: number) {
-    this.usart.writeByte(byte)
+    this.rxQueue.push(byte)
   }
 
   get timeMs(): number {

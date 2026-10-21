@@ -12,19 +12,28 @@ import {
   type PartType,
   type Project,
 } from './sim/project'
+import { DumeControls } from './DumeControls'
 import { PartsPanel } from './PartsPanel'
 import { Viewport } from './Viewport'
 import './App.css'
 
+const SERIAL_LIMIT = 20_000
+
 export default function App() {
   const rigRef = useRef<Rig | null>(null)
-  const [project, setProject] = useState<Project>(EXAMPLE_PROJECTS.servo_stepper)
+  const [project, setProject] = useState<Project>(EXAMPLE_PROJECTS.dume)
   const projectRef = useRef(project)
+  const [bootId, setBootId] = useState(0)
   const [serial, setSerial] = useState('')
+  const [hidePos, setHidePos] = useState(true)
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [message, setMessage] = useState('')
-  const [readout, setReadout] = useState<{ ms: number; status: Record<string, string> }>({ ms: 0, status: {} })
+  const [readout, setReadout] = useState<{ ms: number; speed: number; status: Record<string, string> }>({
+    ms: 0,
+    speed: 1,
+    status: {},
+  })
 
   useEffect(() => {
     projectRef.current = project
@@ -33,10 +42,11 @@ export default function App() {
   async function boot(fw: Firmware) {
     const hex = fw.kind === 'example' ? await (await fetch(`/examples/${fw.id}.hex`)).text() : fw.hex
     const rig = new Rig(hex)
-    rig.board.onSerial = (b) => setSerial((s) => s + String.fromCharCode(b))
+    rig.board.onSerial = (b) => setSerial((s) => (s + String.fromCharCode(b)).slice(-SERIAL_LIMIT))
     rig.configure(projectRef.current.parts)
     rigRef.current = rig
     setSerial('')
+    setBootId((n) => n + 1)
     setRunning(true)
   }
 
@@ -52,13 +62,15 @@ export default function App() {
     if (!running) return
     let raf = 0
     let last = performance.now()
+    let speed = 1
     const frame = (now: number) => {
       const dt = Math.min(now - last, 50)
       last = now
       const rig = rigRef.current
-      if (rig) {
-        rig.run((dt / 1000) * CPU_HZ)
-        setReadout({ ms: rig.board.timeMs, status: rig.status() })
+      if (rig && dt > 0) {
+        const ran = rig.run((dt / 1000) * CPU_HZ)
+        speed = speed * 0.9 + ((ran / CPU_HZ) / (dt / 1000)) * 0.1
+        setReadout({ ms: rig.board.timeMs, speed, status: rig.status() })
       }
       raf = requestAnimationFrame(frame)
     }
@@ -69,11 +81,15 @@ export default function App() {
   const setParts = (parts: PartConfig[]) => setProject((p) => ({ ...p, parts }))
   const addPart = (type: PartType) => setProject((p) => ({ ...p, parts: [...p.parts, newPart(type, p)] }))
 
-  function sendSerial(e: React.FormEvent) {
-    e.preventDefault()
+  function sendLine(line: string) {
     const board = rigRef.current?.board
     if (!board) return
-    for (const ch of input + '\n') board.serialWrite(ch.charCodeAt(0))
+    for (const ch of line + '\n') board.serialWrite(ch.charCodeAt(0))
+  }
+
+  function sendSerial(e: React.FormEvent) {
+    e.preventDefault()
+    sendLine(input)
     setInput('')
   }
 
@@ -108,7 +124,13 @@ export default function App() {
   }
 
   const fw = project.firmware
-  const rig = rigRef.current
+  const hasDume = project.parts.some((p) => p.type === 'pca9685')
+  const shownSerial = hidePos
+    ? serial
+        .split('\n')
+        .filter((l) => !l.startsWith('POS,'))
+        .join('\n')
+    : serial
 
   return (
     <main className="app">
@@ -132,7 +154,9 @@ export default function App() {
         </select>
         <button onClick={() => setRunning((r) => !r)}>{running ? 'Pausar' : 'Reanudar'}</button>
         <button onClick={() => void boot(project.firmware)}>Reiniciar</button>
-        <span className="muted">t = {(readout.ms / 1000).toFixed(2)} s</span>
+        <span className="muted">
+          t = {(readout.ms / 1000).toFixed(2)} s, velocidad x{readout.speed.toFixed(2)}
+        </span>
       </div>
 
       <div className="toolbar">
@@ -149,11 +173,18 @@ export default function App() {
       </div>
 
       <Viewport
-        pose={() => ({
-          servoDeg: rig?.firstServo?.angle ?? 90,
-          stepperDeg: rig?.firstStepper?.angleDeg ?? 0,
-        })}
+        pose={() => {
+          const rig = rigRef.current
+          if (hasDume && rig) return { kind: 'dume', ...rig.dumePose() }
+          return {
+            kind: 'demo',
+            servoDeg: rig?.firstServo?.angle ?? 90,
+            stepperDeg: rig?.firstStepper?.angleDeg ?? 0,
+          }
+        }}
       />
+
+      {hasDume && <DumeControls key={bootId} send={sendLine} />}
 
       <PartsPanel
         parts={project.parts}
@@ -165,8 +196,13 @@ export default function App() {
         onPot={(id, v) => rigRef.current?.setPot(id, v)}
       />
 
-      <h2>Monitor serial</h2>
-      <pre className="serial">{serial}</pre>
+      <div className="panel-head">
+        <h2>Monitor serial</h2>
+        <label className="muted">
+          <input type="checkbox" checked={hidePos} onChange={(e) => setHidePos(e.target.checked)} /> Ocultar POS
+        </label>
+      </div>
+      <pre className="serial">{shownSerial}</pre>
       <form onSubmit={sendSerial} className="toolbar">
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Enviar al Arduino" />
         <button type="submit">Enviar</button>
