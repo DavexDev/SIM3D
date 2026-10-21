@@ -1,0 +1,6 @@
+.app { max-width: 640px; margin: 0 auto; padding: 24px 16px; font-family: system-ui, sans-serif; text-align: left; }
+.sub, .muted { color: #888; }
+.row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.led { width: 28px; height: 28px; border-radius: 50%; background: #3a2222; border: 2px solid #666; transition: background .05s; }
+.led.on { background: #ff3b30; box-shadow: 0 0 16px #ff3b30; }
+.serial { background: #111; color: #7CFC9A; padding: 12px; border-radius: 8px; height: 220px; overflow: auto; white-space: pre-wrap; }
