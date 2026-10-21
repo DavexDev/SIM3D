@@ -12,7 +12,7 @@ MVP en desarrollo.
 
 - [x] M1: emulación AVR, serial y LED en el pin 13
 - [x] M2: servo SG90 y stepper STEP/DIR con vista 3D (Three.js)
-- [ ] M3: panel de asignación de pines y proyecto en JSON
+- [x] M3: panel de piezas y pines, proyecto en JSON, carga de .hex propio
 - [ ] M4: demo del brazo DUM-E y primer release
 
 ## Uso
@@ -28,6 +28,13 @@ Para compilar un sketch a `.hex` (requiere `arduino-cli` con el core `arduino:av
 arduino-cli compile --fqbn arduino:avr:uno --output-dir out examples/blink
 cp out/blink.ino.hex public/examples/blink.hex
 ```
+
+## Proyectos y firmware propio
+
+- **Exportar / Importar proyecto**: guarda el cableado (piezas y pines) y el firmware en un `.json` compartible.
+- **Cargar .hex**: corre cualquier sketch compilado para Arduino Uno (ATmega328P).
+- Piezas: LED, servo SG90, stepper con driver STEP/DIR, boton y potenciometro (A0 a A5).
+- La vista 3D anima el primer servo y el primer stepper del proyecto.
 
 ## Licencia
 

@@ -1,53 +1,52 @@
 import { useEffect, useRef, useState } from 'react'
-import { UnoBoard, CPU_HZ } from './sim/board'
-import { parseHex } from './sim/hex'
-import { Servo, Stepper } from './sim/parts'
+import { CPU_HZ } from './sim/board'
+import { Rig } from './sim/rig'
+import {
+  EXAMPLES,
+  EXAMPLE_PROJECTS,
+  newPart,
+  parseProject,
+  validate,
+  type Firmware,
+  type PartConfig,
+  type PartType,
+  type Project,
+} from './sim/project'
+import { PartsPanel } from './PartsPanel'
 import { Viewport } from './Viewport'
 import './App.css'
 
-const LED_PIN = 13
-const SERVO_PIN = 9
-const STEP_PIN = 2
-const DIR_PIN = 3
-
-const EXAMPLES = [
-  { id: 'servo_stepper', label: 'Servo + stepper' },
-  { id: 'blink', label: 'Blink' },
-]
-
-interface Sim {
-  board: UnoBoard
-  servo: Servo
-  stepper: Stepper
-}
-
 export default function App() {
-  const simRef = useRef<Sim | null>(null)
-  const [example, setExample] = useState(EXAMPLES[0].id)
-  const [led, setLed] = useState(false)
+  const rigRef = useRef<Rig | null>(null)
+  const [project, setProject] = useState<Project>(EXAMPLE_PROJECTS.servo_stepper)
+  const projectRef = useRef(project)
   const [serial, setSerial] = useState('')
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
-  const [readout, setReadout] = useState({ ms: 0, servo: 0, pulse: 0, steps: 0 })
+  const [message, setMessage] = useState('')
+  const [readout, setReadout] = useState<{ ms: number; status: Record<string, string> }>({ ms: 0, status: {} })
 
-  async function load(id: string) {
-    const hex = await (await fetch(`/examples/${id}.hex`)).text()
-    const board = new UnoBoard(parseHex(hex))
-    board.onPin((pin, high) => pin === LED_PIN && setLed(high))
-    board.onSerial = (b) => setSerial((s) => s + String.fromCharCode(b))
-    simRef.current = {
-      board,
-      servo: new Servo(board, SERVO_PIN),
-      stepper: new Stepper(board, STEP_PIN, DIR_PIN),
-    }
+  useEffect(() => {
+    projectRef.current = project
+  })
+
+  async function boot(fw: Firmware) {
+    const hex = fw.kind === 'example' ? await (await fetch(`/examples/${fw.id}.hex`)).text() : fw.hex
+    const rig = new Rig(hex)
+    rig.board.onSerial = (b) => setSerial((s) => s + String.fromCharCode(b))
+    rig.configure(projectRef.current.parts)
+    rigRef.current = rig
     setSerial('')
-    setLed(false)
     setRunning(true)
   }
 
   useEffect(() => {
-    void load(example)
-  }, [example])
+    void boot(project.firmware)
+  }, [project.firmware])
+
+  useEffect(() => {
+    rigRef.current?.configure(project.parts)
+  }, [project.parts])
 
   useEffect(() => {
     if (!running) return
@@ -56,15 +55,10 @@ export default function App() {
     const frame = (now: number) => {
       const dt = Math.min(now - last, 50)
       last = now
-      const sim = simRef.current
-      if (sim) {
-        sim.board.run((dt / 1000) * CPU_HZ)
-        setReadout({
-          ms: sim.board.timeMs,
-          servo: sim.servo.angle,
-          pulse: sim.servo.pulseUs,
-          steps: sim.stepper.steps,
-        })
+      const rig = rigRef.current
+      if (rig) {
+        rig.run((dt / 1000) * CPU_HZ)
+        setReadout({ ms: rig.board.timeMs, status: rig.status() })
       }
       raf = requestAnimationFrame(frame)
     }
@@ -72,13 +66,49 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [running])
 
+  const setParts = (parts: PartConfig[]) => setProject((p) => ({ ...p, parts }))
+  const addPart = (type: PartType) => setProject((p) => ({ ...p, parts: [...p.parts, newPart(type, p)] }))
+
   function sendSerial(e: React.FormEvent) {
     e.preventDefault()
-    const board = simRef.current?.board
+    const board = rigRef.current?.board
     if (!board) return
     for (const ch of input + '\n') board.serialWrite(ch.charCodeAt(0))
     setInput('')
   }
+
+  function exportProject() {
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'sim3d-project.json'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  async function importProject(file: File | undefined) {
+    if (!file) return
+    try {
+      setProject(parseProject(await file.text()))
+      setMessage(`Proyecto cargado: ${file.name}`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo cargar el proyecto')
+    }
+  }
+
+  async function loadHex(file: File | undefined) {
+    if (!file) return
+    const hex = await file.text()
+    if (!hex.startsWith(':')) {
+      setMessage('El archivo no parece un .hex de Intel')
+      return
+    }
+    setProject((p) => ({ ...p, firmware: { kind: 'hex', name: file.name, hex } }))
+    setMessage(`Firmware cargado: ${file.name}`)
+  }
+
+  const fw = project.firmware
+  const rig = rigRef.current
 
   return (
     <main className="app">
@@ -88,52 +118,52 @@ export default function App() {
       </header>
 
       <div className="toolbar">
-        <select value={example} onChange={(e) => setExample(e.target.value)}>
+        <select
+          value={fw.kind === 'example' ? fw.id : 'custom'}
+          onChange={(e) => e.target.value !== 'custom' && setProject(EXAMPLE_PROJECTS[e.target.value])}
+          aria-label="Ejemplo"
+        >
           {EXAMPLES.map((ex) => (
             <option key={ex.id} value={ex.id}>
               {ex.label}
             </option>
           ))}
+          {fw.kind === 'hex' && <option value="custom">{fw.name}</option>}
         </select>
         <button onClick={() => setRunning((r) => !r)}>{running ? 'Pausar' : 'Reanudar'}</button>
-        <button onClick={() => load(example)}>Reiniciar</button>
+        <button onClick={() => void boot(project.firmware)}>Reiniciar</button>
         <span className="muted">t = {(readout.ms / 1000).toFixed(2)} s</span>
+      </div>
+
+      <div className="toolbar">
+        <button onClick={exportProject}>Exportar proyecto</button>
+        <label className="filebtn">
+          Importar proyecto
+          <input type="file" accept=".json,application/json" onChange={(e) => void importProject(e.target.files?.[0])} />
+        </label>
+        <label className="filebtn">
+          Cargar .hex
+          <input type="file" accept=".hex" onChange={(e) => void loadHex(e.target.files?.[0])} />
+        </label>
+        {message && <span className="muted">{message}</span>}
       </div>
 
       <Viewport
         pose={() => ({
-          servoDeg: simRef.current?.servo.angle ?? 90,
-          stepperDeg: simRef.current?.stepper.angleDeg ?? 0,
+          servoDeg: rig?.firstServo?.angle ?? 90,
+          stepperDeg: rig?.firstStepper?.angleDeg ?? 0,
         })}
       />
 
-      <section className="parts">
-        <div className="part">
-          <div className={`led ${led ? 'on' : ''}`} />
-          <div>
-            <strong>LED</strong>
-            <div className="muted">
-              Pin {LED_PIN}: {led ? 'HIGH' : 'LOW'}
-            </div>
-          </div>
-        </div>
-        <div className="part">
-          <div>
-            <strong>Servo SG90</strong>
-            <div className="muted">
-              Pin {SERVO_PIN}: {readout.servo.toFixed(0)} deg ({readout.pulse.toFixed(0)} us)
-            </div>
-          </div>
-        </div>
-        <div className="part">
-          <div>
-            <strong>Stepper NEMA-17</strong>
-            <div className="muted">
-              STEP {STEP_PIN} / DIR {DIR_PIN}: {readout.steps} pasos
-            </div>
-          </div>
-        </div>
-      </section>
+      <PartsPanel
+        parts={project.parts}
+        status={readout.status}
+        problems={validate(project)}
+        onChange={setParts}
+        onAdd={addPart}
+        onPress={(id, down) => rigRef.current?.press(id, down)}
+        onPot={(id, v) => rigRef.current?.setPot(id, v)}
+      />
 
       <h2>Monitor serial</h2>
       <pre className="serial">{serial}</pre>

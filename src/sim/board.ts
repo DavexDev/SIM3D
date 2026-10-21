@@ -1,9 +1,11 @@
 import {
+  AVRADC,
   AVRIOPort,
   AVRTimer,
   AVRUSART,
   CPU,
   PinState,
+  adcConfig,
   avrInstruction,
   portBConfig,
   portCConfig,
@@ -30,6 +32,7 @@ export type PinListener = (pin: number, high: boolean, cycles: number) => void
 export class UnoBoard {
   readonly cpu: CPU
   readonly usart: AVRUSART
+  private readonly adc: AVRADC
   private readonly ports: { B: AVRIOPort; C: AVRIOPort; D: AVRIOPort }
   private readonly pinListeners = new Set<PinListener>()
   private readonly lastHigh: Record<number, boolean> = {}
@@ -45,6 +48,7 @@ export class UnoBoard {
       C: new AVRIOPort(this.cpu, portCConfig),
       D: new AVRIOPort(this.cpu, portDConfig),
     }
+    this.adc = new AVRADC(this.cpu, adcConfig)
     this.usart = new AVRUSART(this.cpu, usart0Config, CPU_HZ)
     this.usart.onByteTransmit = (b) => this.onSerial(b)
 
@@ -75,6 +79,17 @@ export class UnoBoard {
       avrInstruction(this.cpu)
       this.cpu.tick()
     }
+  }
+
+  /** Drive a digital input pin from outside (e.g. a button). */
+  setPin(pin: number, high: boolean) {
+    const [port, bit] = UNO_PINS[pin]
+    this.ports[port].setPin(bit, high)
+  }
+
+  /** Set the voltage (0..5) seen on analog channel 0..5 (A0..A5). */
+  setAnalog(channel: number, volts: number) {
+    this.adc.channelValues[channel] = volts
   }
 
   /** Send a byte to the sketch's Serial input. */
